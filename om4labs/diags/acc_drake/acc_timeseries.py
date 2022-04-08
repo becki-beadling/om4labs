@@ -25,7 +25,7 @@ def parse(cliargs=None, template=False):
 
 
 def read(dictArgs):
-    """read zonal velocity field from list of files (either global or section) and extract drake passage if needed"""
+    """read zonal mass transport (umo) field from list of files (either global or section) and extract drake passage if needed"""
 
     # open the dataset
     dset = xr.open_mfdataset(dictArgs["infile"])
@@ -84,9 +84,26 @@ def calculate(darray):
 
     full_transport = darray.sum(dim=dims)
     full_transport = full_transport * (1.0 / 1035.0) * 1.0e-6  # convert to Sv
-    annual_mean_transport = full_transport.groupby("time.year").mean(dim="time")
 
-    return annual_mean
+    # BB: Annual-mean needs to be computed with correctly weighting each month.
+    # Compute correctly-weighted annual mean transport.
+    month_length = darray.time.dt.days_in_month
+    wgts = month_length.groupby("time.year") / month_length.groupby("time.year").sum()
+    # Make sure weights in each year add up to 1.
+    np.testing.assert_allclose(wgts.groupby("time.year").sum(xr.ALL_DIMS), 1.0)
+    ### Setup our masking for nan values
+    cond = array.isnull()
+    ones = xr.where(cond, 0.0, 1.0)
+    # Calculate the numerator
+    array_sum = (full_transport * wgts).resample(time="AS").sum(dim="time")
+    # Calculate the denominator
+    ones_out = (ones * wgts).resample(time="AS").sum(dim="time")
+    # Return the weighted average
+    annual_mean_transport = array_sum / ones_out
+
+    # annual_mean_transport = full_transport.groupby("time.year").mean(dim="time")
+
+    return annual_mean_transport
 
 
 def plot(darray_ts):
